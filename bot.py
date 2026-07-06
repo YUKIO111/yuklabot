@@ -1,4 +1,4 @@
-# bot.py — v2: Sifat tanlash (480p/720p/1080p/2160p) + 🎵 MP3
+# bot.py — v3: Chiroyli xabarlar + 🎟 stiker + 💎 4K fayl sifatida (siqilmaydi)
 # Link tashlang -> sifatni tanlang -> video shu sifatda keladi.
 import asyncio
 import logging
@@ -24,17 +24,19 @@ from aiogram.types import (
 logging.basicConfig(level=logging.INFO)
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+STICKER_ID = os.getenv("STICKER_ID", "")  # "yuklanmoqda" stikeri — sozlash: 🎟 bo'limda
 MAX_SIZE_MB = 48  # Telegram bot limiti 50 MB — ozgina zaxira qoldiramiz
 URL_RE = re.compile(r"https?://\S+")
+LINE = "━━━━━━━━━━━━━"
 
 dp = Dispatcher()
-links: dict[str, str] = {}  # qisqa id -> url (MP3 tugmasi uchun)
+links: dict[str, str] = {}  # qisqa id -> url (tugmalar uchun)
 
 
 def human_error(e: Exception) -> str:
     text = str(e)
     if "ffmpeg" in text.lower() or "ffprobe" in text.lower():
-        return "Serverda ffmpeg yo'q — repo'da nixpacks.toml borligini tekshiring ⚙️"
+        return "Serverda ffmpeg yo'q — Dockerfile yoki nixpacks.toml ni tekshiring ⚙️"
     if "Fayl yuklanmadi" in text:
         return "Video 50 MB ga sig'madi — pastroq sifatni tanlang 📉"
     if "Unsupported URL" in text:
@@ -44,8 +46,8 @@ def human_error(e: Exception) -> str:
     return "Yuklab bo'lmadi. Linkni tekshirib, qayta urinib ko'ring 😕"
 
 
-def download(url: str, folder: str, quality: str = "720", audio: bool = False) -> str:
-    """Videoni (yoki MP3 audioni) yuklab, fayl yo'lini qaytaradi."""
+def download(url: str, folder: str, quality: str = "720", audio: bool = False):
+    """Yuklab: (fayl yo'li, sarlavha, haqiqiy sifat) qaytaradi."""
     opts = {
         "outtmpl": os.path.join(folder, "%(id)s.%(ext)s"),
         "noplaylist": True,
@@ -69,24 +71,52 @@ def download(url: str, folder: str, quality: str = "720", audio: bool = False) -
         )
         opts["merge_output_format"] = "mp4"
     with yt_dlp.YoutubeDL(opts) as ydl:
-        ydl.extract_info(url, download=True)
+        info = ydl.extract_info(url, download=True) or {}
     files = [os.path.join(folder, f) for f in os.listdir(folder)]
     if not files:
         raise RuntimeError("Fayl yuklanmadi")
-    return max(files, key=os.path.getsize)
+    path = max(files, key=os.path.getsize)
+    return path, info.get("title", "Video"), info.get("height")
+
+
+async def send_status(message: Message) -> Message:
+    """Yuklash paytida stiker (yoki STICKER_ID bo'lmasa ⏳) ko'rsatadi."""
+    if STICKER_ID:
+        try:
+            return await message.answer_sticker(STICKER_ID)
+        except Exception:
+            logging.warning("STICKER_ID noto'g'ri — oddiy ⏳ ko'rsatildi")
+    return await message.answer("⏳")
+
+
+async def delete_silently(message: Message) -> None:
+    try:
+        await message.delete()
+    except Exception:
+        pass
 
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message) -> None:
     await message.answer(
-        "📥 <b>Video yuklab beruvchi bot</b>\n"
-        "───────────────\n"
-        "Menga video linkini tashlang:\n"
-        "▫️ Instagram (reels, post)\n"
-        "▫️ TikTok\n"
-        "▫️ YouTube (Shorts)\n"
-        "▫️ Pinterest va boshqalar\n\n"
-        "Videoni yuboraman, xohlasangiz 🎵 MP3 ham beraman!"
+        "👋 <b>Salom! Men video yuklab beruvchi botman</b> 📥\n"
+        f"{LINE}\n"
+        "🔗 Menga shunchaki <b>link</b> tashlang:\n\n"
+        "   📸 Instagram — reels, post\n"
+        "   🎵 TikTok\n"
+        "   ▶️ YouTube — Shorts, video\n"
+        "   📌 Pinterest va boshqalar\n"
+        f"{LINE}\n"
+        "🎚 Sifatni o'zingiz tanlaysiz: 480p dan 💎 4K gacha\n"
+        "🎧 Xohlasangiz MP3 audio ham beraman!"
+    )
+
+
+@dp.message(F.sticker)
+async def sticker_id(message: Message) -> None:
+    await message.answer(
+        "🆔 Bu stikerning ID'si — Railway'da <b>STICKER_ID</b> o'zgaruvchisiga qo'ying:\n\n"
+        f"<code>{message.sticker.file_id}</code>"
     )
 
 
@@ -98,19 +128,22 @@ async def handle_link(message: Message) -> None:
     kb = InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                InlineKeyboardButton(text="📺 480p", callback_data=f"q:{link_id}:480"),
+                InlineKeyboardButton(text="📱 480p", callback_data=f"q:{link_id}:480"),
                 InlineKeyboardButton(text="📺 720p", callback_data=f"q:{link_id}:720"),
             ],
             [
                 InlineKeyboardButton(text="🎬 1080p", callback_data=f"q:{link_id}:1080"),
-                InlineKeyboardButton(text="🎬 2160p (4K)", callback_data=f"q:{link_id}:2160"),
+                InlineKeyboardButton(text="💎 4K", callback_data=f"q:{link_id}:2160"),
             ],
-            [InlineKeyboardButton(text="🎵 Faqat MP3 (audio)", callback_data=f"mp3:{link_id}")],
+            [InlineKeyboardButton(text="🎧 Faqat MP3 (audio)", callback_data=f"mp3:{link_id}")],
         ]
     )
     await message.answer(
         "🎚 <b>Qaysi sifatda yuboray?</b>\n"
-        "<i>Eslatma: video 50 MB dan katta chiqsa yuborilmaydi — unda pastroq sifat tanlang</i>",
+        f"{LINE}\n"
+        "📱 480p / 📺 720p — tez, video ko'rinishida\n"
+        "🎬 1080p / 💎 4K — <b>fayl</b> ko'rinishida (Telegram siqmaydi!)\n\n"
+        "<i>⚠️ 50 MB dan katta chiqsa yuborilmaydi — pastroq sifat tanlang</i>",
         reply_markup=kb,
     )
 
@@ -120,27 +153,34 @@ async def handle_quality(call: CallbackQuery) -> None:
     _, link_id, quality = call.data.split(":")
     url = links.get(link_id)
     if not url:
-        await call.answer("Link eskirgan. Qaytadan yuboring", show_alert=True)
+        await call.answer("Link eskirgan. Linkni qaytadan yuboring 🔄", show_alert=True)
         return
-    await call.answer()
-    await call.message.edit_text(f"⏳ {quality}p yuklanmoqda, kuting...")
+    await call.answer("⏳ Tayyorlanmoqda...")
+    await delete_silently(call.message)
+    status = await send_status(call.message)
     folder = tempfile.mkdtemp()
     try:
-        path = await asyncio.to_thread(download, url, folder, quality=quality)
-        await call.message.edit_text("📤 Yuborilmoqda...")
+        path, title, height = await asyncio.to_thread(download, url, folder, quality=quality)
+        real = f"{height}p" if height else f"{quality}p"
         kb = InlineKeyboardMarkup(inline_keyboard=[[
-            InlineKeyboardButton(text="🎵 MP3 qilib ber", callback_data=f"mp3:{link_id}")
+            InlineKeyboardButton(text="🎧 MP3 qilib ber", callback_data=f"mp3:{link_id}")
         ]])
-        await call.message.answer_video(
-            FSInputFile(path),
-            caption=f"📥 {quality}p — marhamat! Audio kerakmi? 👇",
-            reply_markup=kb,
+        caption = (
+            f"✅ <b>{title}</b>\n"
+            f"{LINE}\n"
+            f"🎞 Sifat: <b>{real}</b>  •  📥 Marhamat!\n"
+            "🎧 Audio kerak bo'lsa — tugmani bosing 👇"
         )
-        await call.message.delete()
+        if quality in ("1080", "2160"):
+            # Fayl (hujjat) sifatida — Telegram siqmaydi, asl sifat saqlanadi!
+            await call.message.answer_document(FSInputFile(path), caption=caption, reply_markup=kb)
+        else:
+            await call.message.answer_video(FSInputFile(path), caption=caption, reply_markup=kb)
     except Exception as e:
         logging.exception("Yuklashda xato")
-        await call.message.edit_text(f"❌ {human_error(e)}")
+        await call.message.answer(f"❌ {human_error(e)}")
     finally:
+        await delete_silently(status)
         shutil.rmtree(folder, ignore_errors=True)
 
 
@@ -148,26 +188,28 @@ async def handle_quality(call: CallbackQuery) -> None:
 async def handle_mp3(call: CallbackQuery) -> None:
     url = links.get(call.data.split(":", 1)[1])
     if not url:
-        await call.answer("Link eskirgan. Qaytadan yuboring", show_alert=True)
+        await call.answer("Link eskirgan. Linkni qaytadan yuboring 🔄", show_alert=True)
         return
-    await call.answer("🎵 Audio tayyorlanmoqda...")
-    status = await call.message.answer("⏳ MP3 tayyorlanmoqda...")
+    await call.answer("🎧 Audio tayyorlanmoqda...")
+    status = await send_status(call.message)
     folder = tempfile.mkdtemp()
     try:
-        path = await asyncio.to_thread(download, url, folder, audio=True)
-        await status.edit_text("📤 Yuborilmoqda...")
-        await call.message.answer_audio(FSInputFile(path), caption="🎵 Marhamat!")
-        await status.delete()
+        path, title, _ = await asyncio.to_thread(download, url, folder, audio=True)
+        await call.message.answer_audio(
+            FSInputFile(path),
+            caption=f"🎧 <b>{title}</b>\n{LINE}\n✨ Marhamat! Yana link tashlang 😉",
+        )
     except Exception as e:
         logging.exception("Audio xatosi")
-        await status.edit_text(f"❌ {human_error(e)}")
+        await call.message.answer(f"❌ {human_error(e)}")
     finally:
+        await delete_silently(status)
         shutil.rmtree(folder, ignore_errors=True)
 
 
 @dp.message()
 async def fallback(message: Message) -> None:
-    await message.answer("🔗 Menga video <b>linkini</b> yuboring (https:// bilan boshlanadi)")
+    await message.answer("🔗 Menga video <b>linkini</b> yuboring (https:// bilan boshlanadi) 😊")
 
 
 async def main() -> None:
