@@ -47,6 +47,8 @@ def download(url: str, folder: str, audio: bool = False) -> str:
         "noplaylist": True,
         "quiet": True,
         "max_filesize": MAX_SIZE_MB * 1024 * 1024,
+        # YouTube blokidan o'tishga yordam beradi: o'zini Android ilova kabi tanitadi
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
     }
     if audio:
         opts["format"] = "bestaudio/best"
